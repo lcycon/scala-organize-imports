@@ -2,12 +2,12 @@
 -- it under the terms of the GNU General Public License as published by
 -- the Free Software Foundation, either version 3 of the License, or
 -- (at your option) any later version.
--- 
+--
 -- This program is distributed in the hope that it will be useful,
 -- but WITHOUT ANY WARRANTY; without even the implied warranty of
 -- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 -- GNU General Public License for more details.
--- 
+--
 -- You should have received a copy of the GNU General Public License
 -- along with this program.  If not, see <http://www.gnu.org/licenses/>.
 {-# LANGUAGE OverloadedStrings #-}
@@ -21,31 +21,46 @@ import Data.List
 import Data.Ord
 import Data.Text (pack)
 
-data Import = Single [String] String
-            | Multi [String] [String]
-            | Wild [String]
-  deriving (Show, Eq)
+data Ident = Simple String
+           | Map String String
+           deriving (Eq)
 
-stem             :: Import -> [String]
+instance Show Ident where
+  show (Simple s) = s
+  show (Map f t) = f ++ " => " ++ t
+
+mainIdent            :: Ident -> String
+mainIdent (Simple s) = s
+mainIdent (Map _ s)  = s
+
+instance Ord Ident where
+  compare a b = compare (mainIdent a) (mainIdent b)
+
+data Import = Single [Ident] Ident
+            | Multi [Ident] [Ident]
+            | Wild [Ident]
+            deriving (Show, Eq)
+
+stem             :: Import -> [Ident]
 stem (Single s _)  = s
 stem (Multi s _) = s
 stem (Wild s)    = s
 
 prettyPrint :: Import -> String
-prettyPrint (Single stem ident) = s ++ "." ++ ident
-  where s = foldl1' (\a b -> a ++ "." ++ b) stem
+prettyPrint (Single stem ident) = s ++ "." ++ show ident
+  where s = (foldl1' (\a b -> a ++ "." ++ b) . map show) stem
 prettyPrint (Wild stem) = s ++ "._"
-  where s = foldl1' (\a b -> a ++ "." ++ b) stem
+  where s = (foldl1' (\a b -> a ++ "." ++ b) . map show) stem
 prettyPrint (Multi stem idents) = s ++ ".{" ++ ids ++ "}"
-  where s   = foldl1' (\a b -> a ++ "." ++ b) stem
-        ids = foldl1' (\a b -> a ++ ", " ++ b) idents
+  where s   = (foldl1' (\a b -> a ++ "." ++ b) . map show) stem
+        ids = (foldl1' (\a b -> a ++ ", " ++ b) . map show) idents
 
 prettyPrintLine :: Import -> String
 prettyPrintLine i = "import " ++ prettyPrint i
 
 compareBreakTies :: Import -> Import -> Ordering
-compareBreakTies (Single _ a) (Single _ b) = compareStrings a b
-compareBreakTies (Multi _ a) (Multi _ b) = compareStems a b
+compareBreakTies (Single _ a) (Single _ b) = compareStrings (show a) (show b)
+compareBreakTies (Multi _ a) (Multi _ b) = compareStems (map show $  a) (map show $ b)
 compareBreakTies (Single _ _) (Multi _ _) = LT
 compareBreakTies (Multi _ _) (Single _ _) = GT
 compareBreakTies (Wild _) _ = LT
@@ -74,7 +89,7 @@ compareStems (x:xs) (y:ys) = case compareStrings x y of
                                     o  -> o
 
 instance Ord Import where
-  compare a b = case compareStems (stem a) (stem b) of
+  compare a b = case compareStems ((map mainIdent . stem) a) ((map mainIdent . stem) b) of
                   EQ -> compareBreakTies a b
                   r  -> r
 
@@ -95,7 +110,7 @@ lineP = do string "import"
                         return [t]
 
 validIdentChar :: Char -> Bool
-validIdentChar c = c /= '.' && c /= '{' && c /= '}' && c /= ',' && c /= '\n'
+validIdentChar c = c /= '.' && c /= '{' && c /= '}' && c /= ',' && c /= '\n' && c /= ' '
 
 manyP :: Parser [Import]
 manyP = basicImportP `sepBy1` (char ',' >> many' (char ' '))
@@ -103,10 +118,21 @@ manyP = basicImportP `sepBy1` (char ',' >> many' (char ' '))
 basicImportP :: Parser Import
 basicImportP = try singleP <|> try wildCardP <|> multiP
 
-identP :: Parser String
-identP = many1 $ satisfy validIdentChar
+identP :: Parser Ident
+identP = try mapIdentP <|> simpleIdentP
 
-stemP :: Parser [String]
+simpleIdentStringP :: Parser String
+simpleIdentStringP = many1 $ satisfy validIdentChar
+
+simpleIdentP :: Parser Ident
+simpleIdentP = fmap Simple simpleIdentStringP
+
+mapIdentP :: Parser Ident
+mapIdentP = Map <$> simpleIdentStringP <*> (spaces >> string "=>" >> spaces >> simpleIdentStringP)
+  where space = char ' '
+        spaces = many' space
+
+stemP :: Parser [Ident]
 stemP = many1 $ identP <* char '.'
 
 wildCardP :: Parser Import
