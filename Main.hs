@@ -21,25 +21,39 @@ import Data.List
 import Data.Ord
 import Data.Text (pack)
 
+main = do fileData <- getContents
+          let results = parseOnly (many1 lineP) (pack fileData)
+          case results of
+            Left _ -> putStrLn "FAILURE"
+            Right imports -> mapM_ (putStrLn . prettyPrintLine) ((sort . concat) imports)
+
 data Ident = Simple String
            | Map String String
            deriving (Eq)
 
+-- Idents and their related instances and helpers
 instance Show Ident where
   show (Simple s) = s
   show (Map f t) = f ++ " => " ++ t
 
-mainIdent            :: Ident -> String
-mainIdent (Simple s) = s
-mainIdent (Map _ s)  = s
-
 instance Ord Ident where
   compare a b = compare (mainIdent a) (mainIdent b)
 
+mainIdent            :: Ident -> String
+mainIdent (Simple s) = s
+mainIdent (Map _ s)  = s
+-- END IDENTS
+
+-- Imports, related instances, and tons of helpers
 data Import = Single [Ident] Ident
             | Multi [Ident] [Ident]
             | Wild [Ident]
             deriving (Show, Eq)
+
+instance Ord Import where
+  compare a b = case compareStems ((map mainIdent . stem) a) ((map mainIdent . stem) b) of
+                  EQ -> compareBreakTies a b
+                  r  -> r
 
 stem             :: Import -> [Ident]
 stem (Single s _)  = s
@@ -58,6 +72,7 @@ prettyPrint (Multi stem idents) = s ++ ".{" ++ ids ++ "}"
 prettyPrintLine :: Import -> String
 prettyPrintLine i = "import " ++ prettyPrint i
 
+-- Some comparison functions
 compareBreakTies :: Import -> Import -> Ordering
 compareBreakTies (Single _ a) (Single _ b) = compareStrings (show a) (show b)
 compareBreakTies (Multi _ a) (Multi _ b) = compareStems (map show $  a) (map show $ b)
@@ -87,17 +102,10 @@ compareStems _  [] = GT
 compareStems (x:xs) (y:ys) = case compareStrings x y of
                                     EQ -> compareStems xs ys
                                     o  -> o
+-- END IMPORTS
 
-instance Ord Import where
-  compare a b = case compareStems ((map mainIdent . stem) a) ((map mainIdent . stem) b) of
-                  EQ -> compareBreakTies a b
-                  r  -> r
 
-main = do fileData <- getContents
-          let results = parseOnly (many1 lineP) (pack fileData)
-          case results of
-            Left _ -> putStrLn "FAILURE"
-            Right imports -> mapM_ (putStrLn . prettyPrintLine) ((sort . concat) imports)
+-- PARSERS AND WHATNOT
 
 lineP :: Parser [Import]
 lineP = do string "import"
