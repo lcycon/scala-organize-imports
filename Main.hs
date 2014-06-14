@@ -25,7 +25,7 @@ main = do fileData <- getContents
           let results = parseOnly (many1 lineP) (pack fileData)
           case results of
             Left _ -> putStrLn "FAILURE"
-            Right imports -> mapM_ (putStrLn . prettyPrintLine) ((sort . concat) imports)
+            Right imports -> mapM_ (putStrLn . prettyPrintLine) (sort imports)
 
 data Ident = Simple String
            | Map String String
@@ -47,6 +47,7 @@ mainIdent (Map _ s)  = s
 -- Imports, related instances, and tons of helpers
 data Import = Single [Ident] Ident
             | Multi [Ident] [Ident]
+            | Many [Import]
             | Wild [Ident]
             deriving (Show, Eq)
 
@@ -59,6 +60,7 @@ stem             :: Import -> [Ident]
 stem (Single s _)  = s
 stem (Multi s _) = s
 stem (Wild s)    = s
+stem (Many (s:ss))    = stem s
 
 prettyPrint :: Import -> String
 prettyPrint (Single stem ident) = s ++ "." ++ show ident
@@ -68,14 +70,16 @@ prettyPrint (Wild stem) = s ++ "._"
 prettyPrint (Multi stem idents) = s ++ ".{" ++ ids ++ "}"
   where s   = (foldl1' (\a b -> a ++ "." ++ b) . map show) stem
         ids = (foldl1' (\a b -> a ++ ", " ++ b) . map show) idents
+prettyPrint (Many imports) = foldl1' (\a b -> a ++ ", " ++ b) (map prettyPrint imports)
 
 prettyPrintLine :: Import -> String
 prettyPrintLine i = "import " ++ prettyPrint i
 
 -- Some comparison functions
 compareBreakTies :: Import -> Import -> Ordering
+compareBreakTies (Many xs) (Many ys) = compare xs ys
 compareBreakTies (Single _ a) (Single _ b) = compareStrings (show a) (show b)
-compareBreakTies (Multi _ a) (Multi _ b) = compareStems (map show $  a) (map show $ b)
+compareBreakTies (Multi _ a) (Multi _ b) = compareStems (map show a) (map show b)
 compareBreakTies (Single _ _) (Multi _ _) = LT
 compareBreakTies (Multi _ _) (Single _ _) = GT
 compareBreakTies (Wild _) _ = LT
@@ -107,21 +111,19 @@ compareStems (x:xs) (y:ys) = case compareStrings x y of
 
 -- PARSERS AND WHATNOT
 
-lineP :: Parser [Import]
+lineP :: Parser Import
 lineP = do string "import"
            many1 $ char ' '
-           imp <- try manyP <|> importList
+           imp <- try manyP <|> basicImportP
            many' $ char ' '
            many1 endOfLine
            return imp
-  where importList = do t <- basicImportP
-                        return [t]
 
 validIdentChar :: Char -> Bool
 validIdentChar c = c /= '.' && c /= '{' && c /= '}' && c /= ',' && c /= '\n' && c /= ' '
 
-manyP :: Parser [Import]
-manyP = basicImportP `sepBy1` (char ',' >> many' (char ' '))
+manyP :: Parser Import
+manyP = fmap Many (basicImportP `sepBy1` (char ',' >> many' (char ' ')))
 
 basicImportP :: Parser Import
 basicImportP = try singleP <|> try wildCardP <|> multiP
